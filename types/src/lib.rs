@@ -20,6 +20,26 @@ pub mod trade;
 pub mod user;
 pub mod vault;
 
+/// Serde via the strum `Display` / `FromStr` impls, so the wire strings live in one place.
+/// Every enum using this has a `#[strum(default)] Unknown(String)` variant, so parsing never
+/// fails: an unrecognised value lands in `Unknown` carrying the raw string.
+macro_rules! serde_via_strum {
+    ($($ty:ty),* $(,)?) => {$(
+        impl serde::Serialize for $ty {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                s.collect_str(self)
+            }
+        }
+        impl<'de> serde::Deserialize<'de> for $ty {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                let raw = <std::borrow::Cow<'de, str>>::deserialize(d)?;
+                raw.parse().map_err(serde::de::Error::custom)
+            }
+        }
+    )*};
+}
+pub(crate) use serde_via_strum;
+
 #[derive(
     Debug,
     Display,
@@ -69,4 +89,22 @@ pub enum Blockchain {
     Zcash,
     #[serde(other)]
     Unknown,
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::fmt::Debug;
+
+    use serde::{Serialize, de::DeserializeOwned};
+
+    /// Asserts that `value` serializes to the JSON string `wire` and that `wire` parses back
+    /// to `value`.
+    pub(crate) fn assert_wire<T>(value: &T, wire: &str)
+    where
+        T: Serialize + DeserializeOwned + PartialEq + Debug,
+    {
+        let json = format!("\"{wire}\"");
+        assert_eq!(serde_json::to_string(value).unwrap(), json);
+        assert_eq!(serde_json::from_str::<T>(&json).unwrap(), *value);
+    }
 }
